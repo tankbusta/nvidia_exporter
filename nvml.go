@@ -43,6 +43,17 @@ type Device struct {
 	i          int
 }
 
+// NVMLMemory contains information about the memory allocation of a device
+type NVMLMemory struct {
+	// Unallocated FB memory (in bytes).
+	Free int64
+	// Total installed FB memory (in bytes).
+	Total int64
+	// Allocated FB memory (in bytes). Note that the driver/GPU always sets
+	// aside a small amount of memory for bookkeeping.
+	Used int64
+}
+
 func newDevice(nvmlDevice C.nvmlDevice_t, idx int) (dev Device, err error) {
 	dev = Device{
 		d: nvmlDevice,
@@ -124,6 +135,21 @@ func (s *Device) GetTemperature() (tempF, tempC int, err error) {
 	}
 	tempC = int(tempc)
 	tempF = int(tempC*9/5 + 32)
+	return
+}
+
+// GetMemoryInfo retrieves the amount of used, free and total memory available on the device, in bytes.
+func (s *Device) GetMemoryInfo() (memInfo NVMLMemory, err error) {
+	var res C.nvmlMemory_t
+
+	if result := C.nvmlDeviceGetMemoryInfo(s.d, &res); result != C.NVML_SUCCESS {
+		err = getGoError(result)
+		return
+	}
+
+	memInfo.Free = int64(res.free)
+	memInfo.Total = int64(res.total)
+	memInfo.Used = int64(res.used)
 	return
 }
 
