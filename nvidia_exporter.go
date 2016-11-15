@@ -17,6 +17,7 @@ type VecInfo struct {
 }
 
 var (
+	// DefaultNamespace is the base namespace used by the exporter
 	DefaultNamespace = "nvml"
 	// unexported variables below
 	listenAddress string
@@ -29,6 +30,18 @@ var (
 		},
 		"gpu_percent": &VecInfo{
 			help:   "Percent of GPU Utilized",
+			labels: []string{"device_uuid", "device_name"},
+		},
+		"memory_free": &VecInfo{
+			help:   "Number of bytes free in the GPU Memory",
+			labels: []string{"device_uuid", "device_name"},
+		},
+		"memory_total": &VecInfo{
+			help:   "Total bytes of the GPU's memory",
+			labels: []string{"device_uuid", "device_name"},
+		},
+		"memory_used": &VecInfo{
+			help:   "Total number of bytes used in the GPU Memory",
 			labels: []string{"device_uuid", "device_name"},
 		},
 		"memory_percent": &VecInfo{
@@ -93,9 +106,16 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 
 // GetTelemetryFromNVML collects device telemetry from all NVIDIA GPUs connected to this machine
 func (e *Exporter) GetTelemetryFromNVML() {
+	var (
+		gpuMem                    NVMLMemory
+		powerUsage                int
+		gpuPercent, memoryPercent int
+		err                       error
+		tempF, tempC              int
+	)
+
 	for _, device := range e.devices {
-		gpuPercent, memoryPercent, err := device.GetUtilization()
-		if err != nil {
+		if gpuPercent, memoryPercent, err = device.GetUtilization(); err != nil {
 			fmt.Printf("Failed to get Device Utilization for %s: %s\n", device.DeviceUUID, err.Error())
 			e.up.Set(0)
 			return
@@ -103,8 +123,7 @@ func (e *Exporter) GetTelemetryFromNVML() {
 		e.gauges["gpu_percent"].WithLabelValues(device.DeviceUUID, device.DeviceName).Set(float64(gpuPercent))
 		e.gauges["memory_percent"].WithLabelValues(device.DeviceUUID, device.DeviceName).Set(float64(memoryPercent))
 
-		tempF, tempC, err := device.GetTemperature()
-		if err != nil {
+		if tempF, tempC, err = device.GetTemperature(); err != nil {
 			fmt.Printf("Failed to get Device Temperature for %s: %s\n", device.DeviceUUID, err.Error())
 			e.up.Set(0)
 			return
@@ -112,13 +131,21 @@ func (e *Exporter) GetTelemetryFromNVML() {
 		e.gauges["temperature_celsius"].WithLabelValues(device.DeviceUUID, device.DeviceName).Set(float64(tempC))
 		e.gauges["temperature_fahrenheit"].WithLabelValues(device.DeviceUUID, device.DeviceName).Set(float64(tempF))
 
-		powerUsage, err := device.GetPowerUsage()
-		if err != nil {
+		if powerUsage, err = device.GetPowerUsage(); err != nil {
 			fmt.Printf("Failed to get Device Power Usage for %s: %s\n", device.DeviceUUID, err.Error())
 			e.up.Set(0)
 			return
 		}
 		e.gauges["power_watts"].WithLabelValues(device.DeviceUUID, device.DeviceName).Set(float64(powerUsage))
+
+		if gpuMem, err = device.GetMemoryInfo(); err != nil {
+			fmt.Printf("Failed to get Memory Info for %s: %s\n", device.DeviceUUID, err.Error())
+			e.up.Set(0)
+			return
+		}
+		e.gauges["memory_free"].WithLabelValues(device.DeviceUUID, device.DeviceName).Set(float64(gpuMem.Free))
+		e.gauges["memory_total"].WithLabelValues(device.DeviceUUID, device.DeviceName).Set(float64(gpuMem.Total))
+		e.gauges["memory_used"].WithLabelValues(device.DeviceUUID, device.DeviceName).Set(float64(gpuMem.Used))
 	}
 }
 
