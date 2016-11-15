@@ -10,6 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// VecInfo stores the prometheus help and labels to
 type VecInfo struct {
 	help   string
 	labels []string
@@ -157,13 +158,13 @@ func main() {
 	}
 	defer ShutdownNVML()
 
-	landingPageHTML := []byte(`<html>
+	landingPageHTML := []byte(fmt.Sprintf(`<html>
              <head><title>NVML Exporter</title></head>
              <body>
              <h1>NVML Exporter</h1>
-             <p><a href='` + metricsPath + `'>Metrics</a></p>
+             <p><a href='%s'>Metrics</a></p>
              </body>
-             </html>`)
+             </html>`, metricsPath))
 
 	log.Printf("Starting NVML Exporter Server: %s\n", listenAddress)
 	exporter, err := NewExporter()
