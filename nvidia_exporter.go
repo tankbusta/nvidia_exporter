@@ -71,18 +71,20 @@ type Exporter struct {
 }
 
 // NewExporter TODO
-func NewExporter() (exp *Exporter, err error) {
-	exp = &Exporter{
+func NewExporter() (*Exporter, error) {
+	devices, err := GetDevices()
+	if err != nil {
+		return nil, err
+	}
+
+	exp := &Exporter{
 		gauges: make(map[string]*prometheus.GaugeVec, len(gaugeMetrics)),
 		up: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: DefaultNamespace,
 			Name:      "up",
 			Help:      "Were the NVML queries successful?",
 		}),
-	}
-
-	if exp.devices, err = GetDevices(); err != nil {
-		return
+		devices: devices,
 	}
 
 	for name, info := range gaugeMetrics {
@@ -92,7 +94,8 @@ func NewExporter() (exp *Exporter, err error) {
 			Help:      info.help,
 		}, info.labels)
 	}
-	return
+
+	return exp, nil
 }
 
 // Describe describes all the metrics ever exported by the nvml/nvidia exporter.
@@ -108,7 +111,7 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 // GetTelemetryFromNVML collects device telemetry from all NVIDIA GPUs connected to this machine
 func (e *Exporter) GetTelemetryFromNVML() {
 	var (
-		gpuMem                    NVMLMemory
+		gpuMem                    *NVMLMemory
 		powerUsage                int
 		gpuPercent, memoryPercent int
 		err                       error
@@ -118,36 +121,34 @@ func (e *Exporter) GetTelemetryFromNVML() {
 	for idx, device := range e.devices {
 		id := strconv.Itoa(idx)
 		if gpuPercent, memoryPercent, err = device.GetUtilization(); err != nil {
-			fmt.Printf("Failed to get Device Utilization for %s: %s\n", device.DeviceUUID, err.Error())
-			e.up.Set(0)
-			return
+			goto ErrorFetching
 		}
 		e.gauges["gpu_percent"].WithLabelValues(id, device.DeviceUUID, device.DeviceName).Set(float64(gpuPercent))
 		e.gauges["memory_percent"].WithLabelValues(id, device.DeviceUUID, device.DeviceName).Set(float64(memoryPercent))
 
 		if tempF, tempC, err = device.GetTemperature(); err != nil {
-			fmt.Printf("Failed to get Device Temperature for %s: %s\n", device.DeviceUUID, err.Error())
-			e.up.Set(0)
-			return
+			goto ErrorFetching
 		}
 		e.gauges["temperature_celsius"].WithLabelValues(id, device.DeviceUUID, device.DeviceName).Set(float64(tempC))
 		e.gauges["temperature_fahrenheit"].WithLabelValues(id, device.DeviceUUID, device.DeviceName).Set(float64(tempF))
 
 		if powerUsage, err = device.GetPowerUsage(); err != nil {
-			fmt.Printf("Failed to get Device Power Usage for %s: %s\n", device.DeviceUUID, err.Error())
-			e.up.Set(0)
-			return
+			goto ErrorFetching
 		}
 		e.gauges["power_watts"].WithLabelValues(id, device.DeviceUUID, device.DeviceName).Set(float64(powerUsage))
 
 		if gpuMem, err = device.GetMemoryInfo(); err != nil {
-			fmt.Printf("Failed to get Memory Info for %s: %s\n", device.DeviceUUID, err.Error())
-			e.up.Set(0)
-			return
+			goto ErrorFetching
 		}
 		e.gauges["memory_free"].WithLabelValues(id, device.DeviceUUID, device.DeviceName).Set(float64(gpuMem.Free))
 		e.gauges["memory_total"].WithLabelValues(id, device.DeviceUUID, device.DeviceName).Set(float64(gpuMem.Total))
 		e.gauges["memory_used"].WithLabelValues(id, device.DeviceUUID, device.DeviceName).Set(float64(gpuMem.Used))
+		continue
+
+	ErrorFetching:
+		log.Printf("Failed to query device %s: %s\n", device.DeviceUUID, err.Error())
+		e.up.Set(0)
+		return
 	}
 }
 
@@ -176,14 +177,12 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 func init() {
 	flag.StringVar(&listenAddress, "web.listen-address", ":9114", "Address to listen on")
 	flag.StringVar(&metricsPath, "web.telemetry-path", "/metrics", "Path under which to expose metrics.")
+	flag.Parse()
 }
 
 func main() {
-	flag.Parse()
-
 	if err := InitNVML(); err != nil {
 		log.Fatalf("Failed initializing exporter: %s\n", err.Error())
-		return
 	}
 	defer ShutdownNVML()
 
