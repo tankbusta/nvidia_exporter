@@ -4,9 +4,13 @@
 
 * CUDA 8.X - Modifications may need to be made in nvml.go to point to your install
 
+## Building
+
+    $ CGO_LDFLAGS="</usr/lib/nvidia-<driver_version>" go build -o nvidia_exporter
+
 ## Usage
 
-    ./nvidia_exporter [flags]
+    $ ./nvidia_exporter [flags]
 
 ### Flags
 

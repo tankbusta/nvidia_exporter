@@ -1,8 +1,8 @@
 package main
 
 /*
-#cgo CFLAGS: -I/usr/local/cuda-8.0/include
-#cgo LDFLAGS: -lnvidia-ml -L/usr/lib/nvidia-367
+#cgo CFLAGS: -I/usr/local/cuda/include
+#cgo LDFLAGS: -lnvidia-ml
 
 #include "bridge.h"
 */
@@ -18,21 +18,17 @@ var (
 	errNoError       = errors.New("nvml: getGoError called on a successful API call")
 )
 
-func getGoError(result C.nvmlReturn_t) (err error) {
-	var errString *C.char
-
+func getGoError(result C.nvmlReturn_t) error {
 	if result == C.NVML_SUCCESS {
-		err = errNoError
-		return
+		return errNoError
 	}
 
-	if errString = C.nvmlErrorString(result); err != nil {
-		err = errNoErrorString
-		return
+	errString := C.nvmlErrorString(result)
+	if errString == nil {
+		return errNoErrorString
 	}
 
-	err = fmt.Errorf("nvml: %s", C.GoString(errString))
-	return
+	return fmt.Errorf("nvml: %s", C.GoString(errString))
 }
 
 // Device describes the NVIDIA GPU device attached to the host
@@ -70,40 +66,36 @@ func newDevice(nvmlDevice C.nvmlDevice_t, idx int) (dev Device, err error) {
 	return
 }
 
-func (s *Device) callGetTextFunc(f C.getNvmlCharProperty, sz C.uint) (rval string, err error) {
+func (s *Device) callGetTextFunc(f C.getNvmlCharProperty, sz C.uint) (string, error) {
 	buf := make([]byte, sz)
 	cs := C.CString(string(buf))
 	defer C.free(unsafe.Pointer(cs))
 
 	if result := C.bridge_get_text_property(f, s.d, cs, sz); result != C.NVML_SUCCESS {
-		err = getGoError(result)
-		return
+		return "", getGoError(result)
 	}
 
-	rval = C.GoString(cs)
-	return
+	return C.GoString(cs), nil
 }
 
-func (s *Device) callGetIntFunc(f C.getNvmlIntProperty) (rval int, err error) {
+func (s *Device) callGetIntFunc(f C.getNvmlIntProperty) (int, error) {
 	var valC C.uint
+
 	if result := C.bridge_get_int_property(f, s.d, &valC); result != C.NVML_SUCCESS {
-		err = getGoError(result)
-		return
+		return 0, getGoError(result)
 	}
-	rval = int(valC)
-	return
+
+	return int(valC), nil
 }
 
 // UUID returns the Device's Unique ID
 func (s *Device) UUID() (uuid string, err error) {
-	uuid, err = s.callGetTextFunc(C.getNvmlCharProperty(C.nvmlDeviceGetUUID), C.NVML_DEVICE_UUID_BUFFER_SIZE)
-	return
+	return s.callGetTextFunc(C.getNvmlCharProperty(C.nvmlDeviceGetUUID), C.NVML_DEVICE_UUID_BUFFER_SIZE)
 }
 
 // Name returns the Device's Name and is not guaranteed to exceed 64 characters in length
 func (s *Device) Name() (name string, err error) {
-	name, err = s.callGetTextFunc(C.getNvmlCharProperty(C.nvmlDeviceGetName), C.NVML_DEVICE_NAME_BUFFER_SIZE)
-	return
+	return s.callGetTextFunc(C.getNvmlCharProperty(C.nvmlDeviceGetName), C.NVML_DEVICE_NAME_BUFFER_SIZE)
 }
 
 // GetUtilization returns the GPU and memory usage returned as a percentage used of a given GPU device
@@ -119,100 +111,95 @@ func (s *Device) GetUtilization() (gpu, memory int, err error) {
 }
 
 // GetPowerUsage returns the power consumption of the GPU in watts
-func (s *Device) GetPowerUsage() (usage int, err error) {
-	usage, err = s.callGetIntFunc(C.getNvmlIntProperty(C.nvmlDeviceGetPowerUsage))
+func (s *Device) GetPowerUsage() (int, error) {
+	usage, err := s.callGetIntFunc(C.getNvmlIntProperty(C.nvmlDeviceGetPowerUsage))
+	if err != nil {
+		return 0, err
+	}
 	// nvmlDeviceGetPowerUsage returns milliwatts.. convert to watts
-	usage = usage / 1000
-	return
+	return usage / 1000, nil
 }
 
 // GetTemperature returns the Device's temperature in Farenheit and celsius
-func (s *Device) GetTemperature() (tempF, tempC int, err error) {
+func (s *Device) GetTemperature() (int, int, error) {
 	var tempc C.uint
 	if result := C.nvmlDeviceGetTemperature(s.d, C.NVML_TEMPERATURE_GPU, &tempc); result != C.NVML_SUCCESS {
-		err = getGoError(result)
-		return
+		return -1, -1, getGoError(result)
 	}
-	tempC = int(tempc)
-	tempF = int(tempC*9/5 + 32)
-	return
+
+	return int(tempc), int(tempc*9/5 + 32), nil
 }
 
 // GetMemoryInfo retrieves the amount of used, free and total memory available on the device, in bytes.
-func (s *Device) GetMemoryInfo() (memInfo NVMLMemory, err error) {
+func (s *Device) GetMemoryInfo() (memInfo *NVMLMemory, err error) {
 	var res C.nvmlMemory_t
 
 	if result := C.nvmlDeviceGetMemoryInfo(s.d, &res); result != C.NVML_SUCCESS {
-		err = getGoError(result)
-		return
+		return nil, getGoError(result)
 	}
 
-	memInfo.Free = int64(res.free)
-	memInfo.Total = int64(res.total)
-	memInfo.Used = int64(res.used)
-	return
+	return &NVMLMemory{
+		Free:  int64(res.free),
+		Total: int64(res.total),
+		Used:  int64(res.used),
+	}, nil
 }
 
 // InitNVML initializes NVML
-func InitNVML() (err error) {
+func InitNVML() error {
 	if result := C.nvmlInit(); result != C.NVML_SUCCESS {
-		err = getGoError(result)
-		return
+		return getGoError(result)
 	}
-	return
+	return nil
 }
 
 // ShutdownNVML all resources that were created when we initialized
-func ShutdownNVML() (err error) {
+func ShutdownNVML() error {
 	if result := C.nvmlShutdown(); result != C.NVML_SUCCESS {
-		err = getGoError(result)
-		return
+		return getGoError(result)
 	}
-	return
+	return nil
 }
 
 // GetDeviceCount returns the # of CUDA devices present on the host
-func GetDeviceCount() (count int, err error) {
+func GetDeviceCount() (int, error) {
 	var cnt C.uint
 
 	if result := C.nvmlDeviceGetCount(&cnt); result != C.NVML_SUCCESS {
-		err = getGoError(result)
-		return
+		return 0, getGoError(result)
 	}
-	count = int(cnt)
-	return
+	return int(cnt), nil
 }
 
 // DeviceGetHandleByIndex acquires the handle for a particular device, based on its index.
-func DeviceGetHandleByIndex(idx int) (device *C.nvmlDevice_t, err error) {
+func DeviceGetHandleByIndex(idx int) (*C.nvmlDevice_t, error) {
+	var device *C.nvmlDevice_t
+
 	if result := C.nvmlDeviceGetHandleByIndex(C.uint(idx), device); result != C.NVML_SUCCESS {
-		err = getGoError(result)
-		return
+		return nil, getGoError(result)
 	}
-	return
+	return device, nil
 }
 
 // GetDevices returns a list of all installed CUDA devices
-func GetDevices() (devices []Device, err error) {
+func GetDevices() ([]Device, error) {
 	var nvdev C.nvmlDevice_t
 
 	devCount, err := GetDeviceCount()
 	if err != nil {
-		return
+		return nil, err
 	}
 
-	devices = make([]Device, devCount)
-
+	devices := make([]Device, devCount)
 	for i := 0; i <= devCount-1; i++ {
 		if result := C.nvmlDeviceGetHandleByIndex(C.uint(i), &nvdev); result != C.NVML_SUCCESS {
-			err = getGoError(result)
-			return
+			return nil, getGoError(result)
 		}
 
 		if devices[i], err = newDevice(nvdev, i); err != nil {
-			return
+			return nil, err
 		}
 	}
 
-	return
+	return devices, nil
 }
