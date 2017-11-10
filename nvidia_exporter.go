@@ -131,7 +131,7 @@ func (e *Exporter) GetTelemetryFromNVML() {
 		e.gauges["gpu_percent"].WithLabelValues(id, device.DeviceUUID, device.DeviceName).Set(float64(gpuPercent))
 		e.gauges["memory_percent"].WithLabelValues(id, device.DeviceUUID, device.DeviceName).Set(float64(memoryPercent))
 
-		if tempF, tempC, err = device.GetTemperature(); err != nil {
+		if tempC, tempF, err = device.GetTemperature(); err != nil {
 			goto ErrorFetching
 		}
 		e.gauges["temperature_celsius"].WithLabelValues(id, device.DeviceUUID, device.DeviceName).Set(float64(tempC))
