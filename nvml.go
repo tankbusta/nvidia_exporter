@@ -120,6 +120,15 @@ func (s *Device) GetPowerUsage() (int, error) {
 	return usage / 1000, nil
 }
 
+// GetFanSpeed returns the fan speed in percent
+func (s *Device) GetFanSpeed() (int, error) {
+        speed, err := s.callGetIntFunc(C.getNvmlIntProperty(C.nvmlDeviceGetFanSpeed))
+        if err != nil {
+                return 0, err
+        }
+        return speed, nil
+}
+
 // GetTemperature returns the Device's temperature in Farenheit and celsius
 func (s *Device) GetTemperature() (int, int, error) {
 	var tempc C.uint
